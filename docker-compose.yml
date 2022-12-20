@@ -1,0 +1,94 @@
+version: '3.4'
+
+x-common-env-vars:
+  - &postgres-url
+    "BALLSDEXBOT_DB_URL=postgres://ballsdex:${POSTGRES_PASSWORD}@postgres:5432/ballsdex"
+  - &postgres-db
+    POSTGRES_DB=ballsdex
+  - &postgres-user
+    POSTGRES_USER=ballsdex
+  - &postgres-password
+    POSTGRES_PASSWORD
+
+services:
+
+  bot:
+    restart: "no"
+    image: ballsdex
+    build: .
+    environment:
+      - *postgres-url
+      - BALLSDEXBOT_TOKEN
+    depends_on:
+      - postgres-db
+    ports:
+      - "15260:15260"
+    volumes:
+      - type: bind
+        source: ./
+        target: /code
+    command: poetry run python3 -m ballsdex --dev --disable-rich --prometheus --prometheus-host 0.0.0.0
+
+  admin-panel:
+    image: ballsdex
+    ports:
+      - "8000:8000"
+    environment:
+      - *postgres-url
+      - "BALLSDEXBOT_REDIS_URL=redis://redis"
+    depends_on:
+      - postgres-db
+      - redis-cache
+    volumes:
+      - type: bind
+        source: ./
+        target: /code
+    command: poetry run uvicorn ballsdex.core.admin:_app --host 0.0.0.0
+
+  postgres-db:
+    image: postgres
+    restart: always
+    hostname: postgres
+    environment:
+      - *postgres-db
+      - *postgres-user
+      - *postgres-password
+    ports:
+      - "5432:5432"
+    volumes:  # Persist the db data
+      - database-data:/var/lib/postgresql/data
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local
+    restart: always
+    user: postgres:postgres
+    volumes:
+      - /var/opt/pgbackups:/backups
+    depends_on:
+      - postgres-db
+    environment:
+      - *postgres-db
+      - *postgres-user
+      - *postgres-password
+      - POSTGRES_HOST=postgres
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=6
+      - HEALTHCHECK_PORT=3928
+
+  redis-cache:
+    image: redis:latest
+    restart: always
+    hostname: redis
+    ports:
+      - "6379:6379"
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    command: redis-server --save 20 1 --loglevel warning
+    volumes: 
+      - cache-data:/data
+
+volumes:
+  database-data:
+  cache-data:
